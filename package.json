@@ -1,0 +1,14 @@
+{
+  "name": "slot-watcher",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "nodemailer": "^6.9.14",
+    "undici": "^6.19.8"
+  }
+}
