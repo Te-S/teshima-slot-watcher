@@ -1,7 +1,7 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 import logging
@@ -13,6 +13,9 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
+
+# JST timezone (UTC+9)
+JST = timezone(timedelta(hours=9))
 
 class SlotWatcher:
     def __init__(self):
@@ -402,6 +405,8 @@ class SlotWatcher:
                 # Try to find calendar elements with multiple selectors
                 calendar_selectors = [
                     ".body-calendar-jp .item",
+                    "button.item",
+                    ".item",
                     "td",
                     ".day",
                     "[class*='day']",
@@ -438,7 +443,7 @@ class SlotWatcher:
                         # Check for availability status with multiple approaches
                         status = 'unknown'
                         
-                        # Method 1: Check CSS classes
+                        # Method 1: Check CSS classes on the element itself
                         element_classes = element.get_attribute('class') or ''
                         if 'aval' in element_classes or 'available' in element_classes:
                             status = 'available'
@@ -449,7 +454,27 @@ class SlotWatcher:
                         elif 'closed' in element_classes:
                             status = 'closed'
                         
-                        # Method 2: Check for child elements with status classes
+                        # Method 2: Check for sibling elements with price-day classes
+                        if status == 'unknown':
+                            # Look for sibling elements with price-day classes
+                            parent = element.find_element(By.XPATH, "..")
+                            price_elements = parent.find_elements(By.CSS_SELECTOR, ".price-day")
+                            for price_elem in price_elements:
+                                price_classes = price_elem.get_attribute('class') or ''
+                                if 'aval' in price_classes or 'available' in price_classes:
+                                    status = 'available'
+                                    break
+                                elif 'one-left' in price_classes:
+                                    status = 'few_left'
+                                    break
+                                elif 'sold-out' in price_classes:
+                                    status = 'sold_out'
+                                    break
+                                elif 'closed' in price_classes:
+                                    status = 'closed'
+                                    break
+                        
+                        # Method 3: Check for child elements with status classes
                         if status == 'unknown':
                             status_selectors = [
                                 ".price-day.aval",
@@ -469,7 +494,7 @@ class SlotWatcher:
                                         status = 'closed'
                                     break
                         
-                        # Method 3: Check element text for status indicators
+                        # Method 4: Check element text for status indicators
                         if status == 'unknown':
                             element_text = element.text.lower()
                             if any(word in element_text for word in ['available', 'open', 'circle']):
@@ -533,12 +558,12 @@ class SlotWatcher:
                     return year, month
             
             # Default to current year and October
-            current_year = datetime.now().year
+            current_year = datetime.now(JST).year
             return current_year, 10
             
         except Exception as e:
             logging.warning(f"Could not extract month/year from Selenium: {e}")
-            current_year = datetime.now().year
+            current_year = datetime.now(JST).year
             return current_year, 10
     
     def check_for_changes(self, current_availability):
@@ -594,7 +619,7 @@ class SlotWatcher:
                 <h2>🎫 Teshima Art Museum Ticket Alert!</h2>
                 <p><strong>Date:</strong> {target_date.strftime('%B %d, %Y')}</p>
                 <p><strong>Status:</strong> {status_text}</p>
-                <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>Time:</strong> {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}</p>
                 <hr>
                 <p><a href="{self.url}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Book Now</a></p>
                 <p><small>This is an automated notification from your Slot Watcher.</small></p>
@@ -657,13 +682,13 @@ class SlotWatcher:
                 elif status == 'closed':
                     closed_count += 1
             
-            subject = f"🧪 Teshima Art Museum Slot Watcher - Test Report ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+            subject = f"🧪 Teshima Art Museum Slot Watcher - Test Report ({datetime.now(JST).strftime('%Y-%m-%d %H:%M')})"
             
             html_content = f"""
             <html>
             <body>
                 <h2>🧪 Slot Watcher Test Report</h2>
-                <p><strong>Test Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>Test Time:</strong> {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}</p>
                 <p><strong>Monitoring URL:</strong> <a href="{self.url}">{self.url}</a></p>
                 
                 <h3>📅 Calendar Status:</h3>
