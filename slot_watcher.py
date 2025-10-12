@@ -19,13 +19,8 @@ class SlotWatcher:
         self.url = "https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/185773"
         self.target_email = os.getenv('TARGET_EMAIL', 'yli881118@gmail.com')
         self.sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
-        self.target_dates = [
-            date(2024, 10, 20),
-            date(2024, 10, 21), 
-            date(2024, 10, 22),
-            date(2024, 10, 23),
-            date(2024, 10, 24)
-        ]
+        # No specific target dates - we'll monitor the entire calendar
+        self.target_dates = []
         self.state_file = 'availability_state.json'
         self.last_availability = self.load_state()
     
@@ -309,10 +304,9 @@ class SlotWatcher:
                         year, month = month_year
                         potential_date = date(year, month, day_num)
                         
-                        # Only include if it's in our target dates
-                        if potential_date in self.target_dates:
-                            availability_data[potential_date.strftime('%Y-%m-%d')] = status
-                            logging.info(f"Found static date {potential_date}: {status}")
+                        # Include all dates found in the calendar
+                        availability_data[potential_date.strftime('%Y-%m-%d')] = status
+                        logging.info(f"Found static date {potential_date}: {status}")
         
         return availability_data
     
@@ -422,10 +416,9 @@ class SlotWatcher:
                             year, month = month_year
                             potential_date = date(year, month, day_num)
                             
-                            # Only include if it's in our target dates
-                            if potential_date in self.target_dates:
-                                availability_data[potential_date.strftime('%Y-%m-%d')] = status
-                                logging.info(f"Found Selenium date {potential_date}: {status}")
+                            # Include all dates found in the calendar
+                            availability_data[potential_date.strftime('%Y-%m-%d')] = status
+                            logging.info(f"Found Selenium date {potential_date}: {status}")
                     
                     except Exception as e:
                         logging.warning(f"Error processing calendar element: {e}")
@@ -480,20 +473,35 @@ class SlotWatcher:
             return current_year, 10
     
     def check_for_changes(self, current_availability):
-        """Check if availability has changed and send notifications"""
-        for target_date in self.target_dates:
-            date_str = target_date.strftime('%Y-%m-%d')
+        """Check if availability has changed and send notifications for any available dates"""
+        available_dates = []
+        
+        # Find all available dates in the current calendar
+        for date_str, status in current_availability.items():
+            if status in ['available', 'few_left']:
+                try:
+                    parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    available_dates.append((parsed_date, status))
+                except ValueError:
+                    continue
+        
+        # Check if any available dates are new (weren't available before)
+        new_available_dates = []
+        for parsed_date, status in available_dates:
+            date_str = parsed_date.strftime('%Y-%m-%d')
+            previous_status = self.last_availability.get(date_str, 'unknown')
             
-            # Check if this date has become available
-            if date_str in current_availability:
-                current_status = current_availability[date_str]
-                previous_status = self.last_availability.get(date_str, 'unknown')
-                
-                # If status changed to available or few left, send notification
-                if (current_status in ['available', 'few_left'] and 
-                    previous_status not in ['available', 'few_left']):
-                    
-                    self.send_notification(target_date, current_status)
+            # If this date wasn't available before, it's new
+            if previous_status not in ['available', 'few_left']:
+                new_available_dates.append((parsed_date, status))
+        
+        # Send notifications for new available dates
+        if new_available_dates:
+            logging.info(f"Found {len(new_available_dates)} new available dates!")
+            for parsed_date, status in new_available_dates:
+                self.send_notification(parsed_date, status)
+        else:
+            logging.info("No new available dates found")
     
     def send_notification(self, target_date, status):
         """Send email notification about availability"""
@@ -541,27 +549,44 @@ class SlotWatcher:
             logging.error(f"Failed to send notification: {str(e)}")
     
     def send_test_email(self, availability_data):
-        """Send a test email with current availability status for all target dates"""
+        """Send a test email with current availability status for all dates found in calendar"""
         if not self.sendgrid_api_key:
             logging.error("SendGrid API key not found. Please set SENDGRID_API_KEY environment variable.")
             return
         
         try:
-            # Create a comprehensive status report
+            # Create a comprehensive status report for all dates found
             status_lines = []
-            for target_date in self.target_dates:
-                date_str = target_date.strftime('%Y-%m-%d')
-                status = availability_data.get(date_str, 'not_found')
+            available_count = 0
+            few_left_count = 0
+            sold_out_count = 0
+            closed_count = 0
+            
+            for date_str, status in availability_data.items():
+                try:
+                    parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    date_display = parsed_date.strftime('%B %d, %Y')
+                except ValueError:
+                    date_display = date_str
                 
                 status_text = {
                     'available': '✅ Available for purchase',
                     'few_left': '⚠️ Only a few left',
                     'sold_out': '❌ Sold out',
-                    'closed': '🚫 Closed',
-                    'not_found': '❓ Not found in calendar'
+                    'closed': '🚫 Closed'
                 }.get(status, f'❓ Unknown: {status}')
                 
-                status_lines.append(f"<li><strong>{target_date.strftime('%B %d, %Y')}</strong>: {status_text}</li>")
+                status_lines.append(f"<li><strong>{date_display}</strong>: {status_text}</li>")
+                
+                # Count by status
+                if status == 'available':
+                    available_count += 1
+                elif status == 'few_left':
+                    few_left_count += 1
+                elif status == 'sold_out':
+                    sold_out_count += 1
+                elif status == 'closed':
+                    closed_count += 1
             
             subject = f"🧪 Teshima Art Museum Slot Watcher - Test Report ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
             
@@ -572,15 +597,17 @@ class SlotWatcher:
                 <p><strong>Test Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
                 <p><strong>Monitoring URL:</strong> <a href="{self.url}">{self.url}</a></p>
                 
-                <h3>📅 Target Dates Status:</h3>
+                <h3>📅 Calendar Status:</h3>
                 <ul>
                     {''.join(status_lines)}
                 </ul>
                 
                 <h3>📊 Summary:</h3>
-                <p>Total target dates: {len(self.target_dates)}</p>
-                <p>Dates found in calendar: {len([d for d in self.target_dates if d.strftime('%Y-%m-%d') in availability_data])}</p>
-                <p>Available dates: {len([d for d in self.target_dates if availability_data.get(d.strftime('%Y-%m-%d')) == 'available'])}</p>
+                <p>Total dates found: {len(availability_data)}</p>
+                <p>✅ Available dates: {available_count}</p>
+                <p>⚠️ Few left dates: {few_left_count}</p>
+                <p>❌ Sold out dates: {sold_out_count}</p>
+                <p>🚫 Closed dates: {closed_count}</p>
                 
                 <hr>
                 <p><small>This is a test email from your Teshima Art Museum Slot Watcher to verify SendGrid is working properly.</small></p>
@@ -609,11 +636,11 @@ class SlotWatcher:
     def run(self, test_mode=False):
         """Run a single check (for GitHub Actions)"""
         logging.info("Starting Slot Watcher check...")
-        logging.info(f"Monitoring dates: {[d.strftime('%Y-%m-%d') for d in self.target_dates]}")
+        logging.info("Monitoring entire calendar for available dates")
         logging.info(f"Target email: {self.target_email}")
         
         if test_mode:
-            logging.info("🧪 Running in TEST MODE - will send test email regardless of changes")
+            logging.info("🧪 Running in TEST MODE - will send test email with all calendar data")
         
         # Run the check
         self.check_availability(test_mode=test_mode)
