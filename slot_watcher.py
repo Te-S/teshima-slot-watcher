@@ -373,9 +373,26 @@ class SlotWatcher:
             chrome_options.add_argument("--window-size=1920,1080")
             chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
             
-            # Initialize the driver
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            # Initialize the driver with proper ChromeDriver path for GitHub Actions
+            try:
+                # Try to find the actual chromedriver binary
+                driver_path = ChromeDriverManager().install()
+                # Fix the path if it points to a text file
+                if 'THIRD_PARTY_NOTICES' in driver_path:
+                    import os
+                    driver_dir = os.path.dirname(driver_path)
+                    # Look for the actual chromedriver binary
+                    for file in os.listdir(driver_dir):
+                        if file.startswith('chromedriver') and not file.endswith('.txt'):
+                            driver_path = os.path.join(driver_dir, file)
+                            break
+                
+                service = Service(driver_path)
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+            except Exception as e:
+                logging.error(f"ChromeDriver setup failed: {e}")
+                # Fallback: try without explicit path
+                driver = webdriver.Chrome(options=chrome_options)
             
             try:
                 # Navigate to the iframe URL directly
