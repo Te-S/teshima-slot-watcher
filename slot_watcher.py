@@ -388,7 +388,7 @@ class SlotWatcher:
                 )
                 
                 # Wait additional time for JavaScript to load calendar data
-                time.sleep(5)
+                time.sleep(10)  # Increased wait for GitHub Actions
                 
                 # Look for calendar elements to ensure they're loaded
                 try:
@@ -400,7 +400,7 @@ class SlotWatcher:
                     logging.warning("Calendar elements not found - may need more time to load")
                 
                 # Wait a bit more for JavaScript to load calendar
-                time.sleep(5)
+                time.sleep(10)  # Increased wait for GitHub Actions
                 
                 # Try to find calendar elements with multiple selectors
                 calendar_selectors = [
