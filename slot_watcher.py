@@ -19,7 +19,25 @@ JST = timezone(timedelta(hours=9))
 
 class SlotWatcher:
     def __init__(self):
-        self.url = "https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/185773"
+        # Multiple museums to monitor
+        self.museums = {
+            'teshima': {
+                'name': 'Teshima Art Museum',
+                'url': 'https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/185773',
+                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/5?language=jpn'
+            },
+            'chichu': {
+                'name': 'Chichu Art Museum',
+                'url': 'https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/176695?language=eng',
+                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/6?language=eng'
+            },
+            'sugimoto': {
+                'name': 'Hiroshi Sugimoto Gallery: Time Corridors',
+                'url': 'https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/185771?language=eng',
+                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/7?language=eng'
+            }
+        }
+        
         self.target_email = os.getenv('TARGET_EMAIL', 'yli881118@gmail.com')
         self.sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
         # No specific target dates - we'll monitor the entire calendar
@@ -46,48 +64,73 @@ class SlotWatcher:
             logging.error(f"Could not save state file: {e}")
         
     def check_availability(self, test_mode=False):
-        """Check ticket availability by fetching the calendar iframe directly"""
+        """Check ticket availability for all museums"""
         try:
-            logging.info("Checking ticket availability...")
+            logging.info("Checking ticket availability for all museums...")
             
-            # The calendar is loaded in an iframe, so we need to fetch the iframe URL directly
-            iframe_url = "https://web.admin-benesse-artsite.com/calendar/5?language=jpn"
-            logging.info(f"Fetching calendar iframe: {iframe_url}")
+            all_availability_data = {}
             
-            # Make request to the iframe URL
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Referer': self.url
-            }
-            
-            response = requests.get(iframe_url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Try to parse calendar data
-            availability_data = self.parse_calendar(soup)
-            
-            # If no data found with static parsing, try Selenium
-            if not availability_data:
-                logging.info("No data found with static parsing, trying Selenium...")
-                selenium_data = self.check_availability_with_selenium()
-                availability_data.update(selenium_data)
+            # Check each museum
+            for museum_id, museum_info in self.museums.items():
+                logging.info(f"Checking {museum_info['name']}...")
+                
+                try:
+                    # Try static parsing first
+                    availability_data = self.check_museum_static(museum_info)
+                    
+                    # If no data found with static parsing, try Selenium
+                    if not availability_data:
+                        logging.info(f"No data found with static parsing for {museum_info['name']}, trying Selenium...")
+                        selenium_data = self.check_museum_selenium(museum_info)
+                        availability_data.update(selenium_data)
+                    
+                    # Add museum prefix to keys
+                    museum_data = {}
+                    for date_str, status in availability_data.items():
+                        museum_data[f"{museum_id}_{date_str}"] = status
+                    
+                    all_availability_data.update(museum_data)
+                    logging.info(f"Found {len(availability_data)} dates for {museum_info['name']}")
+                    
+                except Exception as e:
+                    logging.error(f"Error checking {museum_info['name']}: {str(e)}")
+                    continue
             
             # In test mode, always send test email
             if test_mode:
                 logging.info("🧪 Test mode: Sending test email with current availability data")
-                self.send_test_email(availability_data)
+                self.send_test_email(all_availability_data)
             else:
                 # Check for changes in availability
-                self.check_for_changes(availability_data)
+                self.check_for_changes(all_availability_data)
             
             # Update last known state
-            self.last_availability = availability_data.copy()
-            self.save_state(availability_data)
+            self.last_availability = all_availability_data.copy()
+            self.save_state(all_availability_data)
             
         except Exception as e:
             logging.error(f"Error checking availability: {str(e)}")
+    
+    def check_museum_static(self, museum_info):
+        """Check museum availability using static HTML parsing"""
+        try:
+            # Make request to the iframe URL
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Referer': museum_info['url']
+            }
+            
+            response = requests.get(museum_info['iframe_url'], headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # Parse calendar data
+            return self.parse_calendar(soup)
+            
+        except Exception as e:
+            logging.error(f"Static parsing failed for {museum_info['name']}: {str(e)}")
+            return {}
     
     def parse_calendar(self, soup):
         """Parse the calendar to extract availability information"""
@@ -351,7 +394,7 @@ class SlotWatcher:
         current_year = datetime.now().year
         return current_year, 10
     
-    def check_availability_with_selenium(self):
+    def check_museum_selenium(self, museum_info):
         """Alternative method using Selenium for JavaScript-heavy pages"""
         try:
             from selenium import webdriver
@@ -396,8 +439,7 @@ class SlotWatcher:
             
             try:
                 # Navigate to the iframe URL directly
-                iframe_url = "https://web.admin-benesse-artsite.com/calendar/5?language=jpn"
-                driver.get(iframe_url)
+                driver.get(museum_info['iframe_url'])
                 
                 # Wait for the page to load and JavaScript to execute
                 WebDriverWait(driver, 15).until(
@@ -661,68 +703,101 @@ class SlotWatcher:
             logging.error(f"Failed to send notification: {str(e)}")
     
     def send_test_email(self, availability_data):
-        """Send a test email with current availability status for all dates found in calendar"""
+        """Send a test email with current availability status for all museums"""
         if not self.sendgrid_api_key:
             logging.error("SendGrid API key not found. Please set SENDGRID_API_KEY environment variable.")
             return
         
         try:
-            # Create a comprehensive status report for all dates found
-            status_lines = []
-            available_count = 0
-            few_left_count = 0
-            sold_out_count = 0
-            closed_count = 0
+            # Organize data by museum
+            museum_data = {}
+            for key, status in availability_data.items():
+                if '_' in key:
+                    museum_id, date_str = key.split('_', 1)
+                    if museum_id not in museum_data:
+                        museum_data[museum_id] = {}
+                    museum_data[museum_id][date_str] = status
             
-            for date_str, status in availability_data.items():
-                try:
-                    parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    date_display = parsed_date.strftime('%B %d, %Y')
-                except ValueError:
-                    date_display = date_str
-                
-                status_text = {
-                    'available': '✅ Available for purchase',
-                    'few_left': '⚠️ Only a few left',
-                    'sold_out': '❌ Sold out',
-                    'closed': '🚫 Closed'
-                }.get(status, f'❓ Unknown: {status}')
-                
-                status_lines.append(f"<li><strong>{date_display}</strong>: {status_text}</li>")
-                
-                # Count by status
-                if status == 'available':
-                    available_count += 1
-                elif status == 'few_left':
-                    few_left_count += 1
-                elif status == 'sold_out':
-                    sold_out_count += 1
-                elif status == 'closed':
-                    closed_count += 1
+            # Create museum sections
+            museum_sections = []
+            total_available = 0
+            total_few_left = 0
+            total_sold_out = 0
+            total_closed = 0
             
-            subject = f"🧪 Teshima Art Museum Slot Watcher - Test Report ({datetime.now(JST).strftime('%Y-%m-%d %H:%M')})"
+            for museum_id, museum_info in self.museums.items():
+                museum_name = museum_info['name']
+                museum_url = museum_info['url']
+                
+                if museum_id in museum_data:
+                    dates = museum_data[museum_id]
+                    
+                    # Count statuses for this museum
+                    available_count = sum(1 for s in dates.values() if s == 'available')
+                    few_left_count = sum(1 for s in dates.values() if s == 'few_left')
+                    sold_out_count = sum(1 for s in dates.values() if s == 'sold_out')
+                    closed_count = sum(1 for s in dates.values() if s == 'closed')
+                    
+                    total_available += available_count
+                    total_few_left += few_left_count
+                    total_sold_out += sold_out_count
+                    total_closed += closed_count
+                    
+                    # Create status lines for this museum
+                    status_lines = []
+                    for date_str, status in sorted(dates.items()):
+                        try:
+                            parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                            date_display = parsed_date.strftime('%B %d, %Y')
+                        except ValueError:
+                            date_display = date_str
+                        
+                        status_text = {
+                            'available': '✅ Available for purchase',
+                            'few_left': '⚠️ Only a few left',
+                            'sold_out': '❌ Sold out',
+                            'closed': '🚫 Closed'
+                        }.get(status, f'❓ Unknown: {status}')
+                        
+                        status_lines.append(f"<li><strong>{date_display}</strong>: {status_text}</li>")
+                    
+                    museum_section = f"""
+                    <h3>🏛️ {museum_name}</h3>
+                    <p><strong>URL:</strong> <a href="{museum_url}">{museum_url}</a></p>
+                    <p><strong>Summary:</strong> ✅ {available_count} | ⚠️ {few_left_count} | ❌ {sold_out_count} | 🚫 {closed_count}</p>
+                    <ul>
+                        {''.join(status_lines)}
+                    </ul>
+                    """
+                    museum_sections.append(museum_section)
+                else:
+                    museum_section = f"""
+                    <h3>🏛️ {museum_name}</h3>
+                    <p><strong>URL:</strong> <a href="{museum_url}">{museum_url}</a></p>
+                    <p><strong>Status:</strong> ❓ No data found</p>
+                    """
+                    museum_sections.append(museum_section)
+            
+            subject = f"🧪 Art Museum Slot Watcher - Test Report ({datetime.now(JST).strftime('%Y-%m-%d %H:%M')})"
             
             html_content = f"""
             <html>
             <body>
-                <h2>🧪 Slot Watcher Test Report</h2>
+                <h2>🧪 Art Museum Slot Watcher Test Report</h2>
                 <p><strong>Test Time:</strong> {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}</p>
-                <p><strong>Monitoring URL:</strong> <a href="{self.url}">{self.url}</a></p>
+                <p><strong>Monitoring:</strong> {len(self.museums)} museums</p>
                 
-                <h3>📅 Calendar Status:</h3>
-                <ul>
-                    {''.join(status_lines)}
-                </ul>
+                {''.join(museum_sections)}
                 
-                <h3>📊 Summary:</h3>
+                <h3>📊 Overall Summary:</h3>
                 <p>Total dates found: {len(availability_data)}</p>
-                <p>✅ Available dates: {available_count}</p>
-                <p>⚠️ Few left dates: {few_left_count}</p>
-                <p>❌ Sold out dates: {sold_out_count}</p>
-                <p>🚫 Closed dates: {closed_count}</p>
+                <p>✅ Available dates: {total_available}</p>
+                <p>⚠️ Few left dates: {total_few_left}</p>
+                <p>❌ Sold out dates: {total_sold_out}</p>
+                <p>🚫 Closed dates: {total_closed}</p>
                 
                 <hr>
-                <p><small>This is a test email from your Teshima Art Museum Slot Watcher to verify SendGrid is working properly.</small></p>
+                <p><small>This is a test email from your Art Museum Slot Watcher to verify SendGrid is working properly.</small></p>
                 <p><small>If you received this email, SendGrid integration is working correctly! 🎉</small></p>
             </body>
             </html>
@@ -747,8 +822,8 @@ class SlotWatcher:
     
     def run(self, test_mode=False):
         """Run a single check (for GitHub Actions)"""
-        logging.info("Starting Slot Watcher check...")
-        logging.info("Monitoring entire calendar for available dates")
+        logging.info("Starting Art Museum Slot Watcher check...")
+        logging.info(f"Monitoring {len(self.museums)} museums for available dates")
         logging.info(f"Target email: {self.target_email}")
         
         if test_mode:
@@ -757,7 +832,7 @@ class SlotWatcher:
         # Run the check
         self.check_availability(test_mode=test_mode)
         
-        logging.info("Slot Watcher check completed.")
+        logging.info("Art Museum Slot Watcher check completed.")
 
 if __name__ == "__main__":
     import sys

@@ -1,4 +1,4 @@
-name: Test SendGrid Integration
+name: Test Art Museum Slot Watcher
 
 on:
   workflow_dispatch: # Manual trigger only

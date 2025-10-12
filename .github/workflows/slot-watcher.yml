@@ -1,4 +1,4 @@
-name: Teshima Art Museum Slot Watcher
+name: Art Museum Slot Watcher
 
 on:
   schedule:
@@ -24,7 +24,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
         
-    - name: Run slot watcher
+    - name: Run art museum slot watcher
       env:
         SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
