@@ -43,16 +43,21 @@ class SlotWatcher:
             logging.error(f"Could not save state file: {e}")
         
     def check_availability(self, test_mode=False):
-        """Check ticket availability for target dates"""
+        """Check ticket availability by fetching the calendar iframe directly"""
         try:
             logging.info("Checking ticket availability...")
             
-            # Make request to the page
+            # The calendar is loaded in an iframe, so we need to fetch the iframe URL directly
+            iframe_url = "https://web.admin-benesse-artsite.com/calendar/5?language=jpn"
+            logging.info(f"Fetching calendar iframe: {iframe_url}")
+            
+            # Make request to the iframe URL
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Referer': self.url
             }
             
-            response = requests.get(self.url, headers=headers, timeout=30)
+            response = requests.get(iframe_url, headers=headers, timeout=30)
             response.raise_for_status()
             
             soup = BeautifulSoup(response.content, 'html.parser')
@@ -370,19 +375,52 @@ class SlotWatcher:
             driver = webdriver.Chrome(service=service, options=chrome_options)
             
             try:
-                # Navigate to the page
-                driver.get(self.url)
+                # Navigate to the iframe URL directly
+                iframe_url = "https://web.admin-benesse-artsite.com/calendar/5?language=jpn"
+                driver.get(iframe_url)
                 
-                # Wait for the page to load
-                WebDriverWait(driver, 10).until(
+                # Wait for the page to load and JavaScript to execute
+                WebDriverWait(driver, 15).until(
                     EC.presence_of_element_located((By.TAG_NAME, "body"))
                 )
+                
+                # Wait additional time for JavaScript to load calendar data
+                time.sleep(5)
+                
+                # Look for calendar elements to ensure they're loaded
+                try:
+                    WebDriverWait(driver, 10).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, "td, .day, [class*='day'], [class*='date']"))
+                    )
+                    logging.info("Calendar elements found - JavaScript loaded successfully")
+                except:
+                    logging.warning("Calendar elements not found - may need more time to load")
                 
                 # Wait a bit more for JavaScript to load calendar
                 time.sleep(5)
                 
-                # Try to find calendar elements
-                calendar_elements = driver.find_elements(By.CSS_SELECTOR, ".body-calendar-jp .item")
+                # Try to find calendar elements with multiple selectors
+                calendar_selectors = [
+                    ".body-calendar-jp .item",
+                    "td",
+                    ".day",
+                    "[class*='day']",
+                    "[class*='date']",
+                    ".calendar td",
+                    ".calendar .day"
+                ]
+                
+                calendar_elements = []
+                for selector in calendar_selectors:
+                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
+                    if elements:
+                        calendar_elements = elements
+                        logging.info(f"Found {len(elements)} calendar elements with selector: {selector}")
+                        break
+                
+                if not calendar_elements:
+                    logging.warning("No calendar elements found with any selector")
+                    return {}
                 
                 availability_data = {}
                 
@@ -397,18 +435,49 @@ class SlotWatcher:
                         
                         day_num = int(day_text)
                         
-                        # Check for availability status
+                        # Check for availability status with multiple approaches
                         status = 'unknown'
                         
-                        # Look for availability indicators
-                        if element.find_elements(By.CSS_SELECTOR, ".price-day.aval"):
+                        # Method 1: Check CSS classes
+                        element_classes = element.get_attribute('class') or ''
+                        if 'aval' in element_classes or 'available' in element_classes:
                             status = 'available'
-                        elif element.find_elements(By.CSS_SELECTOR, ".price-day.one-left"):
+                        elif 'one-left' in element_classes or 'few' in element_classes:
                             status = 'few_left'
-                        elif element.find_elements(By.CSS_SELECTOR, ".price-day.sold-out"):
+                        elif 'sold-out' in element_classes or 'sold' in element_classes:
                             status = 'sold_out'
-                        elif element.find_elements(By.CSS_SELECTOR, ".closed-section"):
+                        elif 'closed' in element_classes:
                             status = 'closed'
+                        
+                        # Method 2: Check for child elements with status classes
+                        if status == 'unknown':
+                            status_selectors = [
+                                ".price-day.aval",
+                                ".price-day.one-left", 
+                                ".price-day.sold-out",
+                                ".closed-section"
+                            ]
+                            for status_selector in status_selectors:
+                                if element.find_elements(By.CSS_SELECTOR, status_selector):
+                                    if 'aval' in status_selector:
+                                        status = 'available'
+                                    elif 'one-left' in status_selector:
+                                        status = 'few_left'
+                                    elif 'sold-out' in status_selector:
+                                        status = 'sold_out'
+                                    elif 'closed' in status_selector:
+                                        status = 'closed'
+                                    break
+                        
+                        # Method 3: Check element text for status indicators
+                        if status == 'unknown':
+                            element_text = element.text.lower()
+                            if any(word in element_text for word in ['available', 'open', 'circle']):
+                                status = 'available'
+                            elif any(word in element_text for word in ['few', 'limited', 'triangle']):
+                                status = 'few_left'
+                            elif any(word in element_text for word in ['sold', 'out', 'cross', 'closed']):
+                                status = 'sold_out'
                         
                         # Try to determine the month/year from page context
                         month_year = self.extract_month_year_from_selenium(driver)
