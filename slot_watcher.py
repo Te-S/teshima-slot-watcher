@@ -526,7 +526,7 @@ class SlotWatcher:
             """
             
             message = Mail(
-                from_email='noreply@slotwatcher.com',
+                from_email='notification@starcape.online',  # Use verified sender email
                 to_emails=self.target_email,
                 subject=subject,
                 html_content=html_content
@@ -590,7 +590,7 @@ class SlotWatcher:
             """
             
             message = Mail(
-                from_email='noreply@slotwatcher.com',
+                from_email='notification@starcape.online',  # Use verified sender email
                 to_emails=self.target_email,
                 subject=subject,
                 html_content=html_content

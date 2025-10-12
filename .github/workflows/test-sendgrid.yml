@@ -26,4 +26,13 @@ jobs:
         SENDGRID_API_KEY: ${{ secrets.SENDGRID_API_KEY }}
         TARGET_EMAIL: ${{ secrets.TARGET_EMAIL }}
       run: |
+        echo "🔍 Debugging SendGrid configuration..."
+        echo "Target email: $TARGET_EMAIL"
+        echo "API key present: $([ -n "$SENDGRID_API_KEY" ] && echo "Yes" || echo "No")"
+        echo "API key length: $(echo -n "$SENDGRID_API_KEY" | wc -c)"
+        echo ""
+        echo "🧪 Running SendGrid debug test..."
+        python debug_sendgrid.py
+        echo ""
+        echo "🧪 Running main test..."
         python test_sendgrid.py
