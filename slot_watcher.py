@@ -454,18 +454,19 @@ class SlotWatcher:
                         elif 'closed' in element_classes:
                             status = 'closed'
                         
-                        # Method 2: Check for sibling elements with price-day classes
+                        # Method 2: Check for child elements with price-day classes
                         if status == 'unknown':
-                            # Look for sibling elements with price-day classes
-                            parent = element.find_element(By.XPATH, "..")
-                            price_elements = parent.find_elements(By.CSS_SELECTOR, ".price-day")
+                            # Look for child elements with price-day classes
+                            price_elements = element.find_elements(By.CSS_SELECTOR, ".price-day")
+                            
+                            # Check for specific status classes in priority order
                             for price_elem in price_elements:
                                 price_classes = price_elem.get_attribute('class') or ''
-                                if 'aval' in price_classes or 'available' in price_classes:
-                                    status = 'available'
-                                    break
-                                elif 'one-left' in price_classes:
+                                if 'one-left' in price_classes:
                                     status = 'few_left'
+                                    break
+                                elif 'aval' in price_classes or 'available' in price_classes:
+                                    status = 'available'
                                     break
                                 elif 'sold-out' in price_classes:
                                     status = 'sold_out'
@@ -477,17 +478,17 @@ class SlotWatcher:
                         # Method 3: Check for child elements with status classes
                         if status == 'unknown':
                             status_selectors = [
+                                ".price-day.one-left",
                                 ".price-day.aval",
-                                ".price-day.one-left", 
                                 ".price-day.sold-out",
                                 ".closed-section"
                             ]
                             for status_selector in status_selectors:
                                 if element.find_elements(By.CSS_SELECTOR, status_selector):
-                                    if 'aval' in status_selector:
-                                        status = 'available'
-                                    elif 'one-left' in status_selector:
+                                    if 'one-left' in status_selector:
                                         status = 'few_left'
+                                    elif 'aval' in status_selector:
+                                        status = 'available'
                                     elif 'sold-out' in status_selector:
                                         status = 'sold_out'
                                     elif 'closed' in status_selector:
