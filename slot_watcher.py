@@ -47,7 +47,7 @@ class SlotWatcher:
         except Exception as e:
             logging.error(f"Could not save state file: {e}")
         
-    def check_availability(self):
+    def check_availability(self, test_mode=False):
         """Check ticket availability for target dates"""
         try:
             logging.info("Checking ticket availability...")
@@ -71,8 +71,13 @@ class SlotWatcher:
                 selenium_data = self.check_availability_with_selenium()
                 availability_data.update(selenium_data)
             
-            # Check for changes in availability
-            self.check_for_changes(availability_data)
+            # In test mode, always send test email
+            if test_mode:
+                logging.info("🧪 Test mode: Sending test email with current availability data")
+                self.send_test_email(availability_data)
+            else:
+                # Check for changes in availability
+                self.check_for_changes(availability_data)
             
             # Update last known state
             self.last_availability = availability_data.copy()
@@ -535,17 +540,91 @@ class SlotWatcher:
         except Exception as e:
             logging.error(f"Failed to send notification: {str(e)}")
     
-    def run(self):
+    def send_test_email(self, availability_data):
+        """Send a test email with current availability status for all target dates"""
+        if not self.sendgrid_api_key:
+            logging.error("SendGrid API key not found. Please set SENDGRID_API_KEY environment variable.")
+            return
+        
+        try:
+            # Create a comprehensive status report
+            status_lines = []
+            for target_date in self.target_dates:
+                date_str = target_date.strftime('%Y-%m-%d')
+                status = availability_data.get(date_str, 'not_found')
+                
+                status_text = {
+                    'available': '✅ Available for purchase',
+                    'few_left': '⚠️ Only a few left',
+                    'sold_out': '❌ Sold out',
+                    'closed': '🚫 Closed',
+                    'not_found': '❓ Not found in calendar'
+                }.get(status, f'❓ Unknown: {status}')
+                
+                status_lines.append(f"<li><strong>{target_date.strftime('%B %d, %Y')}</strong>: {status_text}</li>")
+            
+            subject = f"🧪 Teshima Art Museum Slot Watcher - Test Report ({datetime.now().strftime('%Y-%m-%d %H:%M')})"
+            
+            html_content = f"""
+            <html>
+            <body>
+                <h2>🧪 Slot Watcher Test Report</h2>
+                <p><strong>Test Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                <p><strong>Monitoring URL:</strong> <a href="{self.url}">{self.url}</a></p>
+                
+                <h3>📅 Target Dates Status:</h3>
+                <ul>
+                    {''.join(status_lines)}
+                </ul>
+                
+                <h3>📊 Summary:</h3>
+                <p>Total target dates: {len(self.target_dates)}</p>
+                <p>Dates found in calendar: {len([d for d in self.target_dates if d.strftime('%Y-%m-%d') in availability_data])}</p>
+                <p>Available dates: {len([d for d in self.target_dates if availability_data.get(d.strftime('%Y-%m-%d')) == 'available'])}</p>
+                
+                <hr>
+                <p><small>This is a test email from your Teshima Art Museum Slot Watcher to verify SendGrid is working properly.</small></p>
+                <p><small>If you received this email, SendGrid integration is working correctly! 🎉</small></p>
+            </body>
+            </html>
+            """
+            
+            message = Mail(
+                from_email='noreply@slotwatcher.com',
+                to_emails=self.target_email,
+                subject=subject,
+                html_content=html_content
+            )
+            
+            sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
+            response = sg.send(message)
+            
+            logging.info("Test email sent successfully!")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Failed to send test email: {str(e)}")
+            return False
+    
+    def run(self, test_mode=False):
         """Run a single check (for GitHub Actions)"""
         logging.info("Starting Slot Watcher check...")
         logging.info(f"Monitoring dates: {[d.strftime('%Y-%m-%d') for d in self.target_dates]}")
         logging.info(f"Target email: {self.target_email}")
         
+        if test_mode:
+            logging.info("🧪 Running in TEST MODE - will send test email regardless of changes")
+        
         # Run the check
-        self.check_availability()
+        self.check_availability(test_mode=test_mode)
         
         logging.info("Slot Watcher check completed.")
 
 if __name__ == "__main__":
+    import sys
+    
+    # Check for test mode argument
+    test_mode = len(sys.argv) > 1 and sys.argv[1] == '--test'
+    
     watcher = SlotWatcher()
-    watcher.run()
+    watcher.run(test_mode=test_mode)
