@@ -6,6 +6,7 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 import logging
 import json
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -61,8 +62,14 @@ class SlotWatcher:
             
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Find calendar elements - we need to inspect the actual page structure
+            # Try to parse calendar data
             availability_data = self.parse_calendar(soup)
+            
+            # If no data found with static parsing, try Selenium
+            if not availability_data:
+                logging.info("No data found with static parsing, trying Selenium...")
+                selenium_data = self.check_availability_with_selenium()
+                availability_data.update(selenium_data)
             
             # Check for changes in availability
             self.check_for_changes(availability_data)
@@ -76,6 +83,181 @@ class SlotWatcher:
     
     def parse_calendar(self, soup):
         """Parse the calendar to extract availability information"""
+        availability_data = {}
+        
+        # First, try to extract calendar data from JavaScript
+        js_data = self.extract_calendar_from_js(soup)
+        if js_data:
+            availability_data.update(js_data)
+            logging.info(f"Found calendar data in JavaScript: {js_data}")
+        
+        # Also try to parse static HTML elements (fallback)
+        html_data = self.parse_static_calendar(soup)
+        if html_data:
+            availability_data.update(html_data)
+            logging.info(f"Found calendar data in HTML: {html_data}")
+        
+        logging.info(f"Total parsed availability data: {availability_data}")
+        return availability_data
+    
+    def extract_calendar_from_js(self, soup):
+        """Extract calendar data from JavaScript variables"""
+        availability_data = {}
+        
+        scripts = soup.find_all('script')
+        for script in scripts:
+            if not script.string:
+                continue
+                
+            script_content = script.string
+            
+            # Look for calendar-related data structures
+            # Common patterns: window.calendarData, calendarData, etc.
+            import re
+            
+            # Try to find calendar data in various formats
+            patterns = [
+                r'calendarData\s*[:=]\s*({[^}]+})',
+                r'window\.calendarData\s*[:=]\s*({[^}]+})',
+                r'calendar\s*[:=]\s*({[^}]+})',
+                r'window\.calendar\s*[:=]\s*({[^}]+})',
+                r'data\s*[:=]\s*({[^}]+})',
+            ]
+            
+            for pattern in patterns:
+                matches = re.findall(pattern, script_content, re.IGNORECASE)
+                for match in matches:
+                    try:
+                        # Try to parse as JSON-like structure
+                        import json
+                        # Clean up the match to make it valid JSON
+                        cleaned = match.replace("'", '"').replace('True', 'true').replace('False', 'false')
+                        data = json.loads(cleaned)
+                        
+                        # Look for date/availability information
+                        availability_data.update(self.parse_js_calendar_data(data))
+                        
+                    except (json.JSONDecodeError, ValueError):
+                        # If not JSON, try to extract date patterns manually
+                        availability_data.update(self.extract_dates_from_text(match))
+        
+        return availability_data
+    
+    def parse_js_calendar_data(self, data):
+        """Parse JavaScript calendar data structure"""
+        availability_data = {}
+        
+        if isinstance(data, dict):
+            for key, value in data.items():
+                # Look for date-like keys
+                if self.is_date_key(key):
+                    date_obj = self.parse_date_key(key)
+                    if date_obj and date_obj in self.target_dates:
+                        status = self.determine_status_from_value(value)
+                        if status:
+                            availability_data[date_obj.strftime('%Y-%m-%d')] = status
+        
+        return availability_data
+    
+    def is_date_key(self, key):
+        """Check if a key represents a date"""
+        import re
+        # Look for patterns like "2024-10-20", "10/20", "20241020", etc.
+        date_patterns = [
+            r'\d{4}-\d{2}-\d{2}',  # 2024-10-20
+            r'\d{2}/\d{2}',        # 10/20
+            r'\d{8}',              # 20241020
+            r'october.*20\d{2}',   # october 2024
+        ]
+        
+        for pattern in date_patterns:
+            if re.search(pattern, key.lower()):
+                return True
+        return False
+    
+    def parse_date_key(self, key):
+        """Parse a date key into a date object"""
+        import re
+        from datetime import datetime
+        
+        try:
+            # Try different date formats
+            formats = [
+                '%Y-%m-%d',        # 2024-10-20
+                '%m/%d',           # 10/20
+                '%Y%m%d',          # 20241020
+            ]
+            
+            for fmt in formats:
+                try:
+                    parsed = datetime.strptime(key, fmt)
+                    # If no year, assume 2024
+                    if parsed.year == 1900:
+                        parsed = parsed.replace(year=2024)
+                    return parsed.date()
+                except ValueError:
+                    continue
+            
+            # Try regex extraction
+            match = re.search(r'(\d{4})-(\d{2})-(\d{2})', key)
+            if match:
+                year, month, day = map(int, match.groups())
+                return date(year, month, day)
+                
+        except Exception as e:
+            logging.warning(f"Could not parse date key '{key}': {e}")
+        
+        return None
+    
+    def determine_status_from_value(self, value):
+        """Determine availability status from a value"""
+        if isinstance(value, str):
+            value_lower = value.lower()
+            if any(word in value_lower for word in ['available', 'open', 'circle']):
+                return 'available'
+            elif any(word in value_lower for word in ['few', 'limited', 'triangle']):
+                return 'few_left'
+            elif any(word in value_lower for word in ['sold', 'out', 'cross', 'closed']):
+                return 'sold_out'
+            elif 'closed' in value_lower:
+                return 'closed'
+        elif isinstance(value, bool):
+            return 'available' if value else 'sold_out'
+        elif isinstance(value, int):
+            if value > 0:
+                return 'available' if value > 5 else 'few_left'
+            else:
+                return 'sold_out'
+        
+        return None
+    
+    def extract_dates_from_text(self, text):
+        """Extract date information from text patterns"""
+        availability_data = {}
+        import re
+        
+        # Look for date patterns with status indicators
+        patterns = [
+            r'(\d{4}-\d{2}-\d{2})["\']?\s*[:=]\s*["\']?([^"\'}\s,]+)',
+            r'(\d{2}/\d{2})["\']?\s*[:=]\s*["\']?([^"\'}\s,]+)',
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, text)
+            for date_str, status_str in matches:
+                try:
+                    date_obj = self.parse_date_key(date_str)
+                    if date_obj and date_obj in self.target_dates:
+                        status = self.determine_status_from_value(status_str)
+                        if status:
+                            availability_data[date_obj.strftime('%Y-%m-%d')] = status
+                except Exception as e:
+                    logging.warning(f"Error parsing date from text: {e}")
+        
+        return availability_data
+    
+    def parse_static_calendar(self, soup):
+        """Parse static HTML calendar elements (fallback method)"""
         availability_data = {}
         
         # Look for calendar items with availability information
@@ -115,33 +297,182 @@ class SlotWatcher:
                     if closed_section:
                         status = 'closed'
                     
-                    # Try to determine the month and year
-                    # This is tricky since we need to infer from context
-                    # For now, we'll assume current year and try to match October dates
-                    current_year = datetime.now().year
-                    
-                    # Look for October dates (month 10)
-                    # We need to be more sophisticated about this
-                    # For now, let's check if this could be October 2024
-                    if day_num in [20, 21, 22, 23, 24]:
-                        # This could be our target date
-                        potential_date = date(current_year, 10, day_num)
+                    # Try to determine the month and year from context
+                    # Look for month/year indicators in the calendar
+                    month_year = self.extract_month_year_from_context(soup)
+                    if month_year:
+                        year, month = month_year
+                        potential_date = date(year, month, day_num)
                         
                         # Only include if it's in our target dates
                         if potential_date in self.target_dates:
                             availability_data[potential_date.strftime('%Y-%m-%d')] = status
-                            logging.info(f"Found date {potential_date}: {status}")
+                            logging.info(f"Found static date {potential_date}: {status}")
         
-        # Also look for any JavaScript data that might contain calendar information
-        scripts = soup.find_all('script')
-        for script in scripts:
-            if script.string and 'calendar' in script.string.lower():
-                # Try to extract calendar data from JavaScript
-                # This would need more sophisticated parsing
-                pass
-        
-        logging.info(f"Parsed availability data: {availability_data}")
         return availability_data
+    
+    def extract_month_year_from_context(self, soup):
+        """Extract month and year from calendar context"""
+        # Look for month/year indicators in the calendar
+        month_year_elements = soup.find_all(['span', 'div'], class_=lambda x: x and any(
+            keyword in str(x).lower() for keyword in ['month', 'year', 'calendar-title']
+        ))
+        
+        for element in month_year_elements:
+            text = element.get_text(strip=True)
+            # Look for patterns like "October 2024", "2024年10月", etc.
+            import re
+            
+            # English patterns
+            match = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})', text.lower())
+            if match:
+                month_name, year = match.groups()
+                month_map = {
+                    'january': 1, 'february': 2, 'march': 3, 'april': 4,
+                    'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                    'september': 9, 'october': 10, 'november': 11, 'december': 12
+                }
+                return int(year), month_map[month_name]
+            
+            # Japanese patterns
+            match = re.search(r'(\d{4})年(\d{1,2})月', text)
+            if match:
+                year, month = map(int, match.groups())
+                return year, month
+        
+        # Default to current year and October if we can't determine
+        current_year = datetime.now().year
+        return current_year, 10
+    
+    def check_availability_with_selenium(self):
+        """Alternative method using Selenium for JavaScript-heavy pages"""
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from webdriver_manager.chrome import ChromeDriverManager
+            from selenium.webdriver.chrome.service import Service
+            
+            logging.info("Attempting to use Selenium for JavaScript-heavy page...")
+            
+            # Set up Chrome options for headless mode
+            chrome_options = Options()
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--window-size=1920,1080")
+            chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+            
+            # Initialize the driver
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            
+            try:
+                # Navigate to the page
+                driver.get(self.url)
+                
+                # Wait for the page to load
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+                
+                # Wait a bit more for JavaScript to load calendar
+                time.sleep(5)
+                
+                # Try to find calendar elements
+                calendar_elements = driver.find_elements(By.CSS_SELECTOR, ".body-calendar-jp .item")
+                
+                availability_data = {}
+                
+                for element in calendar_elements:
+                    try:
+                        # Get the day number
+                        day_element = element.find_element(By.CSS_SELECTOR, ".title-day")
+                        day_text = day_element.text.strip()
+                        
+                        if not day_text.isdigit():
+                            continue
+                        
+                        day_num = int(day_text)
+                        
+                        # Check for availability status
+                        status = 'unknown'
+                        
+                        # Look for availability indicators
+                        if element.find_elements(By.CSS_SELECTOR, ".price-day.aval"):
+                            status = 'available'
+                        elif element.find_elements(By.CSS_SELECTOR, ".price-day.one-left"):
+                            status = 'few_left'
+                        elif element.find_elements(By.CSS_SELECTOR, ".price-day.sold-out"):
+                            status = 'sold_out'
+                        elif element.find_elements(By.CSS_SELECTOR, ".closed-section"):
+                            status = 'closed'
+                        
+                        # Try to determine the month/year from page context
+                        month_year = self.extract_month_year_from_selenium(driver)
+                        if month_year:
+                            year, month = month_year
+                            potential_date = date(year, month, day_num)
+                            
+                            # Only include if it's in our target dates
+                            if potential_date in self.target_dates:
+                                availability_data[potential_date.strftime('%Y-%m-%d')] = status
+                                logging.info(f"Found Selenium date {potential_date}: {status}")
+                    
+                    except Exception as e:
+                        logging.warning(f"Error processing calendar element: {e}")
+                        continue
+                
+                return availability_data
+                
+            finally:
+                driver.quit()
+                
+        except ImportError:
+            logging.warning("Selenium not available, skipping Selenium-based parsing")
+            return {}
+        except Exception as e:
+            logging.error(f"Selenium-based parsing failed: {e}")
+            return {}
+    
+    def extract_month_year_from_selenium(self, driver):
+        """Extract month and year from Selenium driver"""
+        try:
+            # Look for month/year indicators
+            month_year_elements = driver.find_elements(By.CSS_SELECTOR, ".title-calendar-jp, .year-calendar-jp, .month-calendar-jp")
+            
+            for element in month_year_elements:
+                text = element.text.strip()
+                import re
+                
+                # English patterns
+                match = re.search(r'(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{4})', text.lower())
+                if match:
+                    month_name, year = match.groups()
+                    month_map = {
+                        'january': 1, 'february': 2, 'march': 3, 'april': 4,
+                        'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                        'september': 9, 'october': 10, 'november': 11, 'december': 12
+                    }
+                    return int(year), month_map[month_name]
+                
+                # Japanese patterns
+                match = re.search(r'(\d{4})年(\d{1,2})月', text)
+                if match:
+                    year, month = map(int, match.groups())
+                    return year, month
+            
+            # Default to current year and October
+            current_year = datetime.now().year
+            return current_year, 10
+            
+        except Exception as e:
+            logging.warning(f"Could not extract month/year from Selenium: {e}")
+            current_year = datetime.now().year
+            return current_year, 10
     
     def check_for_changes(self, current_availability):
         """Check if availability has changed and send notifications"""
