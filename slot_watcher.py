@@ -631,23 +631,42 @@ class SlotWatcher:
         available_dates = []
         
         # Find all available dates in the current calendar
-        for date_str, status in current_availability.items():
+        for date_key, status in current_availability.items():
             if status in ['available', 'few_left']:
                 try:
+                    # Extract date from museum-prefixed key (e.g., "teshima_2025-10-26" -> "2025-10-26")
+                    if '_' in date_key:
+                        date_str = date_key.split('_', 1)[1]  # Get everything after first underscore
+                    else:
+                        date_str = date_key
+                    
                     parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-                    available_dates.append((parsed_date, status))
-                except ValueError:
+                    available_dates.append((parsed_date, status, date_key))
+                except ValueError as e:
+                    logging.warning(f"Could not parse date from key '{date_key}': {e}")
                     continue
+        
+        logging.info(f"Found {len(available_dates)} available dates in current calendar")
         
         # Check if any available dates are new (weren't available before)
         new_available_dates = []
-        for parsed_date, status in available_dates:
+        for parsed_date, status, original_key in available_dates:
+            # Check both the original key and the date-only key for previous status
+            previous_status_original = self.last_availability.get(original_key, 'unknown')
             date_str = parsed_date.strftime('%Y-%m-%d')
-            previous_status = self.last_availability.get(date_str, 'unknown')
+            previous_status_date = self.last_availability.get(date_str, 'unknown')
+            
+            # Use the more specific previous status (original key takes precedence)
+            previous_status = previous_status_original if previous_status_original != 'unknown' else previous_status_date
+            
+            logging.info(f"Date {date_str}: current={status}, previous={previous_status}")
             
             # If this date wasn't available before, it's new
             if previous_status not in ['available', 'few_left']:
                 new_available_dates.append((parsed_date, status))
+                logging.info(f"NEW availability detected: {date_str} changed from {previous_status} to {status}")
+            else:
+                logging.info(f"EXISTING availability: {date_str} remains {status}")
         
         # Send notifications for new available dates
         if new_available_dates:
