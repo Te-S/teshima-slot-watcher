@@ -34,7 +34,7 @@ class SlotWatcher:
             'sugimoto': {
                 'name': 'Hiroshi Sugimoto Gallery: Time Corridors',
                 'url': 'https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/185771?language=eng',
-                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/7?language=eng'
+                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/4?language=eng'
             }
         }
         
