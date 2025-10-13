@@ -663,7 +663,7 @@ class SlotWatcher:
             
             # If this date wasn't available before, it's new
             if previous_status not in ['available', 'few_left']:
-                new_available_dates.append((parsed_date, status))
+                new_available_dates.append((parsed_date, status, original_key))
                 logging.info(f"NEW availability detected: {date_str} changed from {previous_status} to {status}")
             else:
                 logging.info(f"EXISTING availability: {date_str} remains {status}")
@@ -684,10 +684,12 @@ class SlotWatcher:
         try:
             # Group dates by museum
             museum_dates = {}
-            for parsed_date, status in available_dates:
-                # Determine museum based on the date (simplified - assume Teshima for now)
-                museum_name = "Teshima Art Museum"
-                museum_url = self.museums['teshima']['url']
+            for parsed_date, status, original_key in available_dates:
+                # Extract museum ID from the original key (e.g., "teshima_2025-10-26" -> "teshima")
+                museum_id = original_key.split('_')[0] if '_' in original_key else 'teshima'
+                museum_info = self.museums.get(museum_id, self.museums['teshima'])
+                museum_name = museum_info['name']
+                museum_url = museum_info['url']
                 
                 if museum_name not in museum_dates:
                     museum_dates[museum_name] = {
