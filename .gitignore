@@ -29,9 +29,6 @@ Thumbs.db
 *.log
 slot_watcher.log
 
-# State files
-availability_state.json
-
 # Temporary files
 page_source.html
 *.tmp
