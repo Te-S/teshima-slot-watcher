@@ -502,43 +502,43 @@ class SlotWatcher:
                         # Check for availability status with multiple approaches
                         status = 'unknown'
                         
-                        # Method 1: Check CSS classes on the element itself
-                        element_classes = element.get_attribute('class') or ''
-                        if 'aval' in element_classes or 'available' in element_classes:
-                            status = 'available'
-                        elif 'one-left' in element_classes or 'few' in element_classes:
-                            status = 'few_left'
-                        elif 'sold-out' in element_classes or 'sold' in element_classes:
-                            status = 'sold_out'
-                        elif 'closed' in element_classes:
-                            status = 'closed'
+                        # Method 1: Check for child elements with price-day classes (HIGHEST PRIORITY)
+                        # Child elements are more specific and accurate than parent element classes
+                        price_elements = element.find_elements(By.CSS_SELECTOR, ".price-day")
                         
-                        # Method 2: Check for child elements with price-day classes
+                        # Check ALL price-day elements and keep the highest priority status
+                        # Priority: one-left/available > closed > sold-out > unknown
+                        found_statuses = []
+                        for price_elem in price_elements:
+                            price_classes = price_elem.get_attribute('class') or ''
+                            if 'one-left' in price_classes:
+                                found_statuses.append('few_left')
+                            elif 'aval' in price_classes or 'available' in price_classes:
+                                found_statuses.append('available')
+                            elif 'closed' in price_classes:
+                                found_statuses.append('closed')
+                            elif 'sold-out' in price_classes:
+                                found_statuses.append('sold_out')
+                        
+                        # Select the highest priority status found
+                        if 'few_left' in found_statuses or 'available' in found_statuses:
+                            status = 'few_left' if 'few_left' in found_statuses else 'available'
+                        elif 'closed' in found_statuses:
+                            status = 'closed'
+                        elif 'sold_out' in found_statuses:
+                            status = 'sold_out'
+                        
+                        # Method 2: Check CSS classes on the parent element itself (fallback)
                         if status == 'unknown':
-                            # Look for child elements with price-day classes
-                            price_elements = element.find_elements(By.CSS_SELECTOR, ".price-day")
-                            
-                            # Check ALL price-day elements and keep the highest priority status
-                            # Priority: one-left/available > closed > sold-out > unknown
-                            found_statuses = []
-                            for price_elem in price_elements:
-                                price_classes = price_elem.get_attribute('class') or ''
-                                if 'one-left' in price_classes:
-                                    found_statuses.append('few_left')
-                                elif 'aval' in price_classes or 'available' in price_classes:
-                                    found_statuses.append('available')
-                                elif 'closed' in price_classes:
-                                    found_statuses.append('closed')
-                                elif 'sold-out' in price_classes:
-                                    found_statuses.append('sold_out')
-                            
-                            # Select the highest priority status found
-                            if 'few_left' in found_statuses or 'available' in found_statuses:
-                                status = 'few_left' if 'few_left' in found_statuses else 'available'
-                            elif 'closed' in found_statuses:
-                                status = 'closed'
-                            elif 'sold_out' in found_statuses:
+                            element_classes = element.get_attribute('class') or ''
+                            if 'aval' in element_classes or 'available' in element_classes:
+                                status = 'available'
+                            elif 'one-left' in element_classes or 'few' in element_classes:
+                                status = 'few_left'
+                            elif 'sold-out' in element_classes or 'sold' in element_classes:
                                 status = 'sold_out'
+                            elif 'closed' in element_classes:
+                                status = 'closed'
                         
                         # Method 3: Check for child elements with status classes
                         if status == 'unknown':
