@@ -29,7 +29,7 @@ class SlotWatcher:
             'chichu': {
                 'name': 'Chichu Art Museum',
                 'url': 'https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/176695?language=eng',
-                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/6?language=eng'
+                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/3?language=eng'
             },
             'sugimoto': {
                 'name': 'Hiroshi Sugimoto Gallery: Time Corridors',
