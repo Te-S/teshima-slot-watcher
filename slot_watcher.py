@@ -671,10 +671,93 @@ class SlotWatcher:
         # Send notifications for new available dates
         if new_available_dates:
             logging.info(f"Found {len(new_available_dates)} new available dates!")
-            for parsed_date, status in new_available_dates:
-                self.send_notification(parsed_date, status)
+            self.send_consolidated_notification(new_available_dates)
         else:
             logging.info("No new available dates found")
+    
+    def send_consolidated_notification(self, available_dates):
+        """Send a single consolidated email notification for all available dates"""
+        if not self.sendgrid_api_key:
+            logging.error("SendGrid API key not found. Please set SENDGRID_API_KEY environment variable.")
+            return
+        
+        try:
+            # Group dates by museum
+            museum_dates = {}
+            for parsed_date, status in available_dates:
+                # Determine museum based on the date (simplified - assume Teshima for now)
+                museum_name = "Teshima Art Museum"
+                museum_url = self.museums['teshima']['url']
+                
+                if museum_name not in museum_dates:
+                    museum_dates[museum_name] = {
+                        'url': museum_url,
+                        'dates': []
+                    }
+                museum_dates[museum_name]['dates'].append((parsed_date, status))
+            
+            # Create consolidated email content
+            museum_sections = []
+            total_available = 0
+            
+            for museum_name, museum_info in museum_dates.items():
+                dates_html = []
+                for parsed_date, status in museum_info['dates']:
+                    status_text = {
+                        'available': '✅ Available for purchase',
+                        'few_left': '⚠️ Only a few left',
+                        'sold_out': '❌ Sold out',
+                        'closed': '🚫 Closed'
+                    }.get(status, status)
+                    
+                    dates_html.append(f"<li><strong>{parsed_date.strftime('%B %d, %Y')}</strong>: {status_text}</li>")
+                    total_available += 1
+                
+                museum_section = f"""
+                <h3>🏛️ {museum_name}</h3>
+                <p><strong>Booking URL:</strong> <a href="{museum_info['url']}">{museum_info['url']}</a></p>
+                <ul>
+                    {''.join(dates_html)}
+                </ul>
+                """
+                museum_sections.append(museum_section)
+            
+            subject = f"🎫 Art Museum Tickets Available - {total_available} dates found!"
+            
+            html_content = f"""
+            <html>
+            <body>
+                <h2>🎫 Art Museum Ticket Alert!</h2>
+                <p><strong>Found {total_available} available dates across {len(museum_dates)} museums!</strong></p>
+                <p><strong>Alert Time:</strong> {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}</p>
+                
+                {''.join(museum_sections)}
+                
+                <hr>
+                <p><strong>Quick Actions:</strong></p>
+                <p><a href="{self.museums['teshima']['url']}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">Book Teshima</a>
+                <a href="{self.museums['chichu']['url']}" style="background-color: #2196F3; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; margin-right: 10px;">Book Chichu</a>
+                <a href="{self.museums['sugimoto']['url']}" style="background-color: #FF9800; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Book Sugimoto</a></p>
+                
+                <p><small>This is an automated notification from your Art Museum Slot Watcher.</small></p>
+            </body>
+            </html>
+            """
+            
+            message = Mail(
+                from_email='notification@starcape.online',
+                to_emails=self.target_email,
+                subject=subject,
+                html_content=html_content
+            )
+            
+            sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
+            response = sg.send(message)
+            
+            logging.info(f"Consolidated notification sent for {total_available} available dates")
+            
+        except Exception as e:
+            logging.error(f"Failed to send consolidated notification: {str(e)}")
     
     def send_notification(self, target_date, status):
         """Send email notification about availability"""
@@ -700,7 +783,7 @@ class SlotWatcher:
                 <p><strong>Status:</strong> {status_text}</p>
                 <p><strong>Time:</strong> {datetime.now(JST).strftime('%Y-%m-%d %H:%M:%S')}</p>
                 <hr>
-                <p><a href="{self.url}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Book Now</a></p>
+                <p><a href="{self.museums['teshima']['url']}" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Book Now</a></p>
                 <p><small>This is an automated notification from your Slot Watcher.</small></p>
             </body>
             </html>
