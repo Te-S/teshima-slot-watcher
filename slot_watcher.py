@@ -23,8 +23,8 @@ class SlotWatcher:
         self.museums = {
             'teshima': {
                 'name': 'Teshima Art Museum',
-                'url': 'https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/185773',
-                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/5?language=jpn'
+                'url': 'https://benesse-artsite.eventos.tokyo/web/portal/797/event/8483/module/booth/239565/185773?language=eng',
+                'iframe_url': 'https://web.admin-benesse-artsite.com/calendar/5?language=eng'
             },
             'chichu': {
                 'name': 'Chichu Art Museum',
