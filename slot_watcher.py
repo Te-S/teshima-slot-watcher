@@ -40,8 +40,12 @@ class SlotWatcher:
         
         self.target_email = os.getenv('TARGET_EMAIL', 'yli881118@gmail.com')
         self.sendgrid_api_key = os.getenv('SENDGRID_API_KEY')
-        # No specific target dates - we'll monitor the entire calendar
-        self.target_dates = []
+        
+        # Load configuration from config file
+        self.config = self.load_config()
+        self.target_dates = self.parse_target_dates(self.config.get('target_dates', []))
+        self.check_all_dates = self.config.get('check_all_dates', True)
+        
         self.state_file = 'availability_state.json'
         self.last_availability = self.load_state()
     
@@ -54,6 +58,39 @@ class SlotWatcher:
         except Exception as e:
             logging.warning(f"Could not load state file: {e}")
         return {}
+    
+    def load_config(self):
+        """Load configuration from config.json file"""
+        config_file = 'config.json'
+        try:
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+                    logging.info(f"Loaded configuration from {config_file}")
+                    return config
+            else:
+                logging.info(f"No config file found, using defaults (check all dates)")
+                return {'check_all_dates': True, 'target_dates': []}
+        except Exception as e:
+            logging.error(f"Error loading config file: {e}")
+            return {'check_all_dates': True, 'target_dates': []}
+    
+    def parse_target_dates(self, date_strings):
+        """Parse target dates from config"""
+        target_dates = []
+        for date_str in date_strings:
+            try:
+                parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                target_dates.append(parsed_date)
+            except ValueError as e:
+                logging.warning(f"Invalid date format in config: {date_str} - {e}")
+        
+        if target_dates:
+            logging.info(f"Monitoring specific dates: {[d.strftime('%Y-%m-%d') for d in target_dates]}")
+        else:
+            logging.info("No specific target dates, monitoring all dates")
+        
+        return target_dates
     
     def save_state(self, state):
         """Save current availability state to file"""
@@ -647,6 +684,13 @@ class SlotWatcher:
                         date_str = date_key
                     
                     parsed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    
+                    # Filter by target dates if configured
+                    if not self.check_all_dates and self.target_dates:
+                        if parsed_date not in self.target_dates:
+                            logging.debug(f"Skipping {date_str} - not in target dates")
+                            continue
+                    
                     available_dates.append((parsed_date, status, date_key))
                 except ValueError as e:
                     logging.warning(f"Could not parse date from key '{date_key}': {e}")
