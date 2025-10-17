@@ -1,5 +1,5 @@
 {
-  "check_all_dates": true,
+  "check_all_dates": false,
   "target_dates": [
     "2025-10-20",
     "2025-10-21",
